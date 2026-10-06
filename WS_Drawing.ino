@@ -1,6 +1,11 @@
 // =========================================
 // Drawing Content Block====================
 // =========================================
+void formatDuaAngka(int nilai, char* hasil) {
+  hasil[0] = (nilai / 10) + '0';
+  hasil[1] = (nilai % 10) + '0';
+  hasil[2] = '\0';
+}
 
 static const uint8_t satu[] PROGMEM = {
   16,
@@ -111,11 +116,11 @@ void drawOnAzzan(int DrawAdd) {
       dwText_P(4, 5, P_TIBA);
       Disp.drawRect(33, 3, 126, 12);
       fType(2);
-      dwCtr_P(-12, 0, P_WAKTU);
+      dwCtr_P(-12, 1, P_WAKTU);
       if (jumat) {
-        dwCtr(75, 7, sholatN(8));
+        dwCtr(75, 8, sholatN(8));
       } else {
-        dwCtr(75, 7, sholatN(SholatNow));
+        dwCtr(75, 8, sholatN(SholatNow));
       }
       { Buzzer(1); }
     } else {
@@ -137,7 +142,7 @@ void drawOnAzzan(int DrawAdd) {
 void drawAzzan(int DrawAdd) {
   // check RunSelector
   if (!dwDo(DrawAdd)) return;
-  uint16_t az = Prm.AD;
+  uint16_t az = Prm.AD, in = Prm.IN;
   static int ct;
   static uint16_t lsRn;
   uint16_t Tmr = millis();
@@ -146,7 +151,7 @@ void drawAzzan(int DrawAdd) {
   char BuffScd[5];
 
   if (jumat) {
-    ct_limit = 12 * 60;
+    ct_limit = in * 60;
   } else {
     ct_limit = az * 60;
   }
@@ -156,8 +161,8 @@ void drawAzzan(int DrawAdd) {
     
     mnt = (ct_limit - ct) / 60;
     scd = (ct_limit - ct) % 60;
-    sprintf(BuffMnt, "%02d", mnt);
-    sprintf(BuffScd, "%02d", scd);
+    formatDuaAngka(mnt, BuffMnt);
+    formatDuaAngka(scd, BuffScd);
 
 
     if (mnt > 0) {
@@ -175,11 +180,11 @@ void drawAzzan(int DrawAdd) {
     Disp.drawRect(33, 3, 126, 12);
     fType(2);
     if (jumat) {
-      dwCtr_P(-12, 0, P_ACARA);
-      dwCtr_P(75, 7, P_JUMATAN);
+      dwCtr_P(-12, 1, P_ACARA);
+      dwCtr_P(75, 8, P_JUMATAN);
     } else {
-      dwCtr_P(-12, 0, P_ADZAN);
-      dwCtr(75, 7, sholatN(SholatNow));
+      dwCtr_P(-12, 1, P_ADZAN);
+      dwCtr(75, 8, sholatN(SholatNow));
     }
     if (ct > (ct_limit - 5))
       Buzzer(1);
@@ -190,6 +195,7 @@ void drawAzzan(int DrawAdd) {
   if (ct > ct_limit) {
     dwDone(DrawAdd);
     ct = 0;
+    Buzzer(0);
   }
 }
 
@@ -210,14 +216,14 @@ void drawIqomah(int DrawAdd) {
   cn_l = (Iqomah[SholatNow] * 60);
 
 
-  Disp.drawRect(33, 2, 126, 13);
+  Disp.drawRect(33, 1, 126, 13);
 
   if ((Tmr - lsRn) > 1000 and ct <= cn_l) {
     lsRn = Tmr;
     mnt = (cn_l - ct) / 60;
     scd = (cn_l - ct) % 60;
-    sprintf(BuffMnt, "%02d", mnt);
-    sprintf(BuffScd, "%02d", scd);
+    formatDuaAngka(mnt, BuffMnt);
+    formatDuaAngka(scd, BuffScd);
 
     if (mnt > 0) {
       Disp.setFont(BigNumber);
@@ -288,12 +294,14 @@ void drawSholat_S(int sNum, int c)  // Box Sholah Time
   float stime = sholatT[sNum];
   uint8_t shour = floor(stime);
   uint8_t sminute = floor((stime - (float)shour) * 60);
-  sprintf(BuffTime, "%02d:%02d", shour, sminute);
+  formatDuaAngka(shour, BuffTime);
+  BuffTime[2] = ':';
+  formatDuaAngka(sminute, BuffTime + 3);
   Disp.drawRect(c + 1, 3, 125, 12);
   fType(2);
-  dwCtr(c - 40, 0, sholatN(sNum));
+  dwCtr(c - 40, 1, sholatN(sNum));
   fType(2);
-  dwCtr(c + 50, 7, BuffTime);
+  dwCtr(c + 50, 8, BuffTime);
   DoSwap = true;
 }
 
@@ -365,8 +373,8 @@ void drawSmallTS(int x)  //Draw Jam dan Menit
   char BuffM[3];
   static uint16_t lsRn;
   uint16_t Tmr = millis();
-  sprintf(BuffH, "%02d", now.hour());
-  sprintf(BuffM, "%02d", now.minute());
+  formatDuaAngka(now.hour(), BuffH);
+  formatDuaAngka(now.minute(), BuffM);
   Disp.setFont(BigNumber);
   Disp.drawFilledRect(32, 16, 0, 0, 0);
   Disp.drawText((x - 9) + 0, 0, BuffH);
@@ -461,15 +469,15 @@ void dwCtr(int x, int y, const char* Msg) {
 }
 
 void Buzzer(uint8_t state) {
-  if (state == 1 and Prm.BZ == 1) {
-    tone(BUZZ, 500, 400);
+  if (state == 1) {
+    if (!isBuzzerActive()) startBuzzer(1);
   } else {
-    noTone(BUZZ);
+    stopBuzzer();
   }
 }
 
 void fType(int x) {
   if (x == 0) Disp.setFont(Font4x6);
-  else if (x == 1) Disp.setFont(SystemFont5x7);
-  else Disp.setFont(System6x7);
+  else if (x == 1) Disp.setFont(System5x7);
+  else Disp.setFont(Font6x7);
 }

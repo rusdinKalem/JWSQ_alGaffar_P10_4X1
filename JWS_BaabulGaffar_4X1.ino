@@ -58,9 +58,9 @@
 #include <avr/pgmspace.h>
 #include <avr/wdt.h>
 #include <font/BigNumber.h>
-#include <font/SystemFont5x7.h>
 #include <font/Font4x6.h>
-#include <font/System6x7.h>
+#include <font/System5x7.h>
+#include <font/Font6x7.h>
 #define BUZZ A0
 
 DMD3 Disp(4, 1);
@@ -96,8 +96,8 @@ typedef struct  // loaded to EEPROM
   uint8_t IA;     // 1 byte  add 35
   uint8_t IM;     // 1 byte  add 36
   uint8_t II;     // 1 byte  add 37
-  int8_t CH;      // 1 byte  add 38
-
+  int8_t  CH;     // 1 byte  add 38
+  uint8_t IN;     // 1 byte  add 39
 } struct_param;
 
 typedef struct
@@ -113,7 +113,7 @@ struct_param Prm;
 hijir_date nowH;
 
 #define ADDR_MP3_PRM 880
-#define MP3_PARAM_VERSION 101
+#define MP3_PARAM_VERSION 103
 
 typedef struct {
   uint8_t version;        // 1 byte  add 880
@@ -130,6 +130,11 @@ struct_mp3_prm Mp3Prm;
 void dfStop();
 void dfSetVolume(uint8_t vol);
 void dfPlayManual(uint8_t folder, uint8_t track);
+void startBuzzer(uint8_t count);
+void stopBuzzer();
+void serviceBuzzer();
+bool isBuzzerActive();
+void Buzzer(uint8_t state);
 
 // Alamat 1022-1023 bebas (area EMPTY: 880-1023)
 #define ADDR_JUMAT 1022
@@ -159,6 +164,71 @@ boolean DoSwap;
 int RunSel = 1;
 int RunFinish = 0;
 
+// =========================================
+// Buzzer Driver (Active & Passive Safe) ===
+// =========================================
+static uint8_t buzzCount = 0;
+static boolean buzzToneActive = false;
+static uint32_t buzzLastMs = 0;
+
+void stopBuzzer() {
+  buzzCount = 0;
+  buzzToneActive = false;
+  noTone(BUZZ);
+  digitalWrite(BUZZ, LOW);
+}
+
+void startBuzzer(uint8_t count) {
+  if (Prm.BZ != 1 || count == 0) {
+    stopBuzzer();
+    return;
+  }
+  buzzCount = count;
+  buzzToneActive = true;
+  buzzLastMs = millis();
+  digitalWrite(BUZZ, HIGH);
+  tone(BUZZ, 2500);
+}
+
+void serviceBuzzer() {
+  if (buzzCount == 0) {
+    if (buzzToneActive) {
+      noTone(BUZZ);
+      digitalWrite(BUZZ, LOW);
+      buzzToneActive = false;
+    }
+    return;
+  }
+
+  uint32_t currentMs = millis();
+  if (buzzToneActive) {
+    // Sedang berbunyi selama 300ms
+    if ((uint32_t)(currentMs - buzzLastMs) >= 300UL) {
+      noTone(BUZZ);
+      digitalWrite(BUZZ, LOW);
+      buzzToneActive = false;
+      buzzLastMs = currentMs;
+      buzzCount--;
+    }
+  } else {
+    // Jeda hening 300ms antar bunyi
+    if ((uint32_t)(currentMs - buzzLastMs) >= 300UL) {
+      if (buzzCount > 0 && Prm.BZ == 1) {
+        buzzToneActive = true;
+        buzzLastMs = currentMs;
+        digitalWrite(BUZZ, HIGH);
+        tone(BUZZ, 2500);
+      } else {
+        buzzCount = 0;
+      }
+    }
+  }
+}
+
+bool isBuzzerActive() {
+  return (buzzCount > 0 || buzzToneActive);
+}
+
 //=======================================
 //===SETUP===============================
 //=======================================
@@ -169,19 +239,18 @@ void setup() {  //init comunications
   Wire.begin();
   Serial.begin(9600);
   pinMode(BUZZ, OUTPUT);
-  digitalWrite(BUZZ, HIGH);
-  delay(100);
-  digitalWrite(BUZZ, LOW);
-  delay(20);
+  stopBuzzer();
+  delay(3000);
+  startBuzzer(1);
   delay(2000);
   updateTime();
   GetPrm();
   mp3_init();
 
-  uint8_t lastSel = EEPROM.read(ADDR_RUNSEL);
-  RunSel = (lastSel >= 100 && lastSel <= 104) ? lastSel : 1;
-  if (RunSel >= 100)
-    jumat = (EEPROM.read(ADDR_JUMAT) == 1);
+  RunSel = 1;
+  jumat = false;
+  EEPROM.update(ADDR_RUNSEL, 1);
+  EEPROM.update(ADDR_JUMAT, 0);
 
   Disp_init();
   update_All_data();
@@ -195,6 +264,7 @@ void setup() {  //init comunications
 void loop() {
   wdt_reset();
   serviceBluetooth();
+  serviceBuzzer();
   
   // Reset & Init Display State
 
@@ -307,21 +377,12 @@ void loop() {
 // DMD3 P10 utility Function================
 // =========================================
 
-// Khusus persisten state kritis (Azan/Iqomah/Blink) untuk hemat umur EEPROM.
 void setRunSel(int val) {
-  if (RunSel == val)
-    return;
   RunSel = val;
-  if (val == 1 || (val >= 100 && val <= 104)) {
-    EEPROM.update(ADDR_RUNSEL, (uint8_t)val);
-  }
 }
 
 void setJumat(bool val) {
-  if (jumat == val)
-    return;
   jumat = val;
-  EEPROM.update(ADDR_JUMAT, val ? 1 : 0);
 }
 
 
@@ -337,6 +398,8 @@ void Disp_init() {
 }
 
 void setBrightness(int bright) {
+  if (bright < 15) bright = 15;
+  if (bright > 1023) bright = 1023;
   Timer1.pwm(9, bright);
 }
 
@@ -348,6 +411,14 @@ void scan() {
 // Time Calculation Block===================
 // =========================================
 
+// Menghitung hari: 1 = Senin, 2 = Selasa, 3 = Rabu, 4 = Kamis, 5 = Jum'at, 6 = Sabtu, 7 = Ahad
+static uint8_t calcDayOfWeek(uint16_t y, uint8_t m, uint8_t d) {
+  static const uint8_t t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  if (m < 3) y -= 1;
+  uint8_t dow = (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7; // 0 = Ahad, 1 = Senin, ..., 6 = Sabtu
+  return (dow == 0) ? 7 : dow; // 1 = Senin, ..., 7 = Ahad
+}
+
 void updateTime() {
   const uint32_t currentMs = millis();
   if (rtcTimeValid && (uint32_t)(currentMs - lastRtcReadMs) < 1000UL) {
@@ -357,7 +428,7 @@ void updateTime() {
   now = RTC.now();
   floatnow =
     (float)now.hour() + (float)now.minute() / 60 + (float)now.second() / 3600;
-  daynow = ((now.dayOfTheWeek() + 6) % 7) + 1;
+  daynow = calcDayOfWeek(now.year(), now.month(), now.day());
   lastRtcReadMs = currentMs;
   rtcTimeValid = true;
 }
@@ -385,10 +456,13 @@ void update_All_data() {
     toHijri(now.year(), now.month(), now.day(), date_cor);  // load Hijir Date
 
   if (displayReady) {
-    if ((floatnow > 21.0f) or (floatnow < 3.5f)) {
-      setBrightness(4);
+    uint8_t baseBright = (Prm.BL < 20) ? 50 : Prm.BL;
+    if ((floatnow > 21.0f) || (floatnow < 3.5f)) {
+      uint8_t nightBright = baseBright / 3;
+      if (nightBright < 15) nightBright = 15;
+      setBrightness(nightBright);
     } else {
-      setBrightness(Prm.BL);
+      setBrightness(baseBright);
     }
   }
 }
@@ -422,6 +496,7 @@ void check_azzan() {
       SholatNow = i;
       azzan = true;
       dfStop();
+      startBuzzer(5);
 
       // drawOnAzzan terdaftar menggunakan nomor 99
       setRunSel(99);

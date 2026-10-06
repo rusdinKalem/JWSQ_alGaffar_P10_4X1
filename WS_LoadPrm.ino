@@ -159,6 +159,7 @@ boolean getNumericTarget(uint8_t &address, uint8_t &valueType)
   else if (commandCodeIs('I', 'M')) { address = 36; valueType = VALUE_INT8; }
   else if (commandCodeIs('I', 'I')) { address = 37; valueType = VALUE_INT8; }
   else if (commandCodeIs('C', 'H')) { address = 38; valueType = VALUE_INT8; }
+  else if (commandCodeIs('I', 'N')) { address = 39; valueType = VALUE_UINT8;}
   else return false;
   return true;
 }
@@ -225,6 +226,19 @@ static boolean parseSimpleFloat(const char *s, float &result) {
   }
   if (*s != '\0') return false;
   result = sign * val;
+  return true;
+}
+
+static boolean parseTwoInts(const char *str, int &first, int &second) {
+  if (str == NULL || *str == '\0') return false;
+  char *sep = NULL;
+  long a = strtol(str, &sep, 10);
+  if (sep == str || (*sep != ',' && *sep != '-')) return false;
+  char *end = NULL;
+  long b = strtol(sep + 1, &end, 10);
+  if (end == sep + 1 || (*end != '\0' && *end != '\r' && *end != '\n')) return false;
+  first = (int)a;
+  second = (int)b;
   return true;
 }
 
@@ -319,11 +333,17 @@ boolean writeMp3Command() {
     return true;
   }
 
+  // Reset Default Parameter MP3: NPR
+  if (c1 == 'P' && c2 == 'R') {
+    set_default_mp3_prm();
+    loadMp3Prm();
+    return true;
+  }
+
   // 2. Play Manual Folder & Track: NPF<folder>,<track> (Contoh: NPF1,2 atau NPF2,1)
   if (c1 == 'P' && c2 == 'F') {
     int f = 0, t = 0;
-    if (sscanf(CH_Prm + 3, "%d,%d", &f, &t) == 2 ||
-        sscanf(CH_Prm + 3, "%d-%d", &f, &t) == 2) {
+    if (parseTwoInts(CH_Prm + 3, f, t)) {
       if (f >= 1 && f <= 99 && t >= 1 && t <= 255) {
         dfPlayManual((uint8_t)f, (uint8_t)t);
         return true;
@@ -339,14 +359,14 @@ boolean writeMp3Command() {
 
   // 3. Play Manual Tartil: NPT<track> atau NPP<track> (Folder 01)
   if (c1 == 'P' && (c2 == 'T' || c2 == 'P')) {
-    if (val < 1 || val > 99) return false;
+    if (val < 1 || val > 255) return false;
     dfPlayManual(1, (uint8_t)val);
     return true;
   }
 
   // 4. Play Manual Tarhim: NPH<track> (Folder 02)
   if (c1 == 'P' && c2 == 'H') {
-    if (val < 1 || val > 99) return false;
+    if (val < 1 || val > 255) return false;
     dfPlayManual(2, (uint8_t)val);
     return true;
   }
@@ -388,17 +408,17 @@ boolean writeMp3Command() {
     return true;
   }
 
-  // Track Tartil: NF1 s.d. NF8 (1-99)
+  // Track Tartil: NF1 s.d. NF8 (1-255)
   if (c1 == 'F') {
-    if (val < 1 || val > 99) return false;
+    if (val < 1 || val > 255) return false;
     Mp3Prm.tartilTrack[slot] = (uint8_t)val;
     saveMp3Prm();
     return true;
   }
 
-  // Track Tarhim: NH1 s.d. NH8 (1-99)
+  // Track Tarhim: NH1 s.d. NH8 (1-255)
   if (c1 == 'H') {
-    if (val < 1 || val > 99) return false;
+    if (val < 1 || val > 255) return false;
     Mp3Prm.tarhimTrack[slot] = (uint8_t)val;
     saveMp3Prm();
     return true;
@@ -414,10 +434,17 @@ boolean writeDirectPlayCommand() {
     return true;
   }
 
+  // Reset Default Parameter MP3: PR
+  if (CH_Prm[1] == 'R') {
+    set_default_mp3_prm();
+    loadMp3Prm();
+    return true;
+  }
+
   // 2. Play Tartil: PT<track> (Folder 01)
   if (CH_Prm[1] == 'T') {
     int t = atoi(CH_Prm + 2);
-    if (t >= 1 && t <= 99) {
+    if (t >= 1 && t <= 255) {
       dfPlayManual(1, (uint8_t)t);
       return true;
     }
@@ -426,7 +453,7 @@ boolean writeDirectPlayCommand() {
   // 3. Play Tarhim: PH<track> (Folder 02)
   if (CH_Prm[1] == 'H') {
     int t = atoi(CH_Prm + 2);
-    if (t >= 1 && t <= 99) {
+    if (t >= 1 && t <= 255) {
       dfPlayManual(2, (uint8_t)t);
       return true;
     }
@@ -435,17 +462,17 @@ boolean writeDirectPlayCommand() {
   // 4. Play Custom: PF<folder>,<track> atau P<folder>,<track>
   int f = 0, t = 0;
   const char *sub = (CH_Prm[1] == 'F') ? (CH_Prm + 2) : (CH_Prm + 1);
-  if (sscanf(sub, "%d,%d", &f, &t) == 2 || sscanf(sub, "%d-%d", &f, &t) == 2) {
+  if (parseTwoInts(sub, f, t)) {
     if (f >= 1 && f <= 99 && t >= 1 && t <= 255) {
       dfPlayManual((uint8_t)f, (uint8_t)t);
       return true;
     }
   }
 
-  // 5. Play Track Folder 01: P<track> (Contoh: P1, P2, P6)
+  // 5. Play Track Folder 01: P<track> (Contoh: P1, P2, P6, P114)
   if (CH_Prm[1] >= '1' && CH_Prm[1] <= '9') {
     int trk = atoi(CH_Prm + 1);
-    if (trk >= 1 && trk <= 99) {
+    if (trk >= 1 && trk <= 255) {
       dfPlayManual(1, (uint8_t)trk);
       return true;
     }
@@ -468,7 +495,7 @@ void LoadPrm()
 
   if (updated) {
     GetPrm();
-    if (Prm.BZ == 1) tone(BUZZ, 2000, 300);
+    if (Prm.BZ == 1) startBuzzer(1);
   }
 }
 
@@ -510,7 +537,7 @@ void set_default_prm() {
 
   Prm = (struct_param){PARAM_VERSION, -4.054413, 121.598583, 67.7, 8,
                        1, 50, 40, 2, 5, 10, 30, 15, 10, 10, 5, 10,
-                       1, 1, 1, 1, 0, 0, 0, 0, 0, 0};
+                       1, 1, 1, 1, 0, 0, 0, 0, 0, 0,12};
   EEPROM.put(0, Prm);
   strcpy_P(buf, D_MASJID); EEPROM.put(40, buf);
   strcpy_P(buf, D_ALAMAT); EEPROM.put(80, buf);
